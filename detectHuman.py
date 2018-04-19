@@ -7,6 +7,7 @@ import numpy as np
 import argparse
 import imutils
 import cv2
+from cmath import rect
 
 # initialise variables and parameters
 hog = ''
@@ -33,12 +34,12 @@ def start():
         # Capture frame-by-frame
         ret,frame=cap.read()
         frameGray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        imageSize = frame.shape
         if i%ithFrame == 0:
             rects = detectPerson(frameGray)
             frame = drawRectangles(rects, frame)        
             cv2.imshow('frame',frame)
-            calcPersonCenter(rect, imageSize)
-            positionDroneOnPersonCenter()
+            positionDroneOnPersonCenter(rect[0], imageSize)
         i=i+1   
     cap.release()
     cv2.waitKey(0)
@@ -76,14 +77,27 @@ def drawRectangles(rects, frame):
     return frame
 
 # justus
-def calcPersonCenter(rect, imageSize):
+def calcPersonCenter(rect):
     
     return
 
+
 # stefan
-def positionDroneOnPersonCenter(center, imageSize):
-    if center 
-    
+def positionDroneOnPersonCenter(rect, imageSize):
+    x,y = calcPersonCenter(rect)
+    if x < (imageSize[0]/2) - droneMovingThresHold:
+        turnLeft()
+    if x > (imageSize[0]/2) + droneMovingThresHold:
+        turnLeft()
+    if y < (imageSize[1]/2) - droneMovingThresHold:
+        up()
+    if y > (imageSize[1]/2) + droneMovingThresHold:
+        down()
+    x, y, w, h = rect
+    if h < imageSize[0] - 50:
+        backward()
+    if h > imageSize[0] + 50:
+        forward()
     return
 
 
