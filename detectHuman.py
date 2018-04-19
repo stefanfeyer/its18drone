@@ -19,8 +19,7 @@ maxSpeed = 1
 ithFrame = 1
 i=0
 
-#init(1, 1, 1, 'testVideoStefan.mp4')
-#init(1, 1, 1, 'testVideoJogger.mp4')
+#init(1, 1, 1, 'testVideoStefan.mp4', 1, 1, 1)
 initDetectPerson()
 start()
 
@@ -44,13 +43,15 @@ def start():
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
-    
-
-def init(hSpeed, rotSpeed, moveSpeed, videoPath):
+# if you want to have it nice take this method, else just ignore it and fill in the values in the top
+def init(hSpeed, rotSpeed, moveSpeed, videoPath, maxHeight, maxSpeed, ithFrame):
     hSpeed = hSpeed
     rotSpeed = rotSpeed
     moveSpeed = moveSpeed
     videoPath = videoPath
+    maxHeight = maxHeight
+    maxSpeed = maxSpeed
+    ithFrame = ithFrame
     return
 
 
@@ -78,7 +79,7 @@ def calcPersonCenter(rect, imageSize):
     
     return
 
-#justus
+# stefan
 def positionDroneOnPersonCenter(center, imageSize):
     
     return
