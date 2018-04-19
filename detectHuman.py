@@ -78,8 +78,10 @@ def drawRectangles(rects, frame):
 
 # justus
 def calcPersonCenter(rect):
-    
-    return
+    x, y, w, h = rect
+    centerX = x + w / 2
+    centerY = y + h / 2
+    return centerX, centerY
 
 
 # stefan
