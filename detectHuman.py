@@ -18,6 +18,7 @@ maxHeight = 1
 maxSpeed = 1
 ithFrame = 1
 i=0
+droneMovingThresHold = 50 # pixels
 
 #init(1, 1, 1, 'testVideoStefan.mp4', 1, 1, 1)
 initDetectPerson()
@@ -81,6 +82,7 @@ def calcPersonCenter(rect, imageSize):
 
 # stefan
 def positionDroneOnPersonCenter(center, imageSize):
+    if center 
     
     return
 
