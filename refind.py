@@ -47,3 +47,6 @@ def refindPerson(baseFrame, baserect, frame, rects):
         return rects[histscores.index(max(histscores))]
     print "when you can read this, the world is destroyed"
     return False
+#hist3 = cv2.calcHist([image], [0], None, [256], [0,256])
+#hist4 = cv2.calcHist([image], [1], None, [256], [0,256])
+#hist5 = cv2.calcHist([image], [2], None, [256], [0,256])
