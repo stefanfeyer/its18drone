@@ -8,6 +8,8 @@ import imutils
 import cv2
 from cmath import rect
 
+import refind
+
 # initialise variables and parameters
 hog = None
 hSpeed = 1
@@ -16,9 +18,9 @@ moveSpeed = 1
 videoPath = ''
 maxHeight = 1
 maxSpeed = 1
-ithFrame = 1
+ithFrame = 2
 i=0
-videoPath = 0 #"testVideoStefan.mp4"
+videoPath = "testVideoStefan.mp4"
 heightThreshold = 50 # pixels
 forwardBackwardThreshold = 50 # pixels
 leftRightThreshold = 50 # pixels
@@ -26,9 +28,13 @@ baseDistance = 0.5 # keep this between 0.1 and 0.9 please!
 
 # main Method
 def main():
+    baseFrame = None
     global i
     cap = cv2.VideoCapture(videoPath)
+    isTracking = False
+    hasTracked = False
     while(cap.isOpened()):
+        print isTracking, hasTracked
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break  
         # Capture frame-by-frame
@@ -37,12 +43,34 @@ def main():
         # drone video is 360 * 640 in size (height, width)
         imageSize = frame.shape
         if i%ithFrame == 0:
-            rects = detectPerson(frameGray)
-            frame = drawRectangles(rects, frame)        
-            cv2.imshow('frame',frame)
-            if len(rects) > 0:
+            if isTracking == False:
+                if hasTracked == False:
+                    rects = detectPerson(frameGray)
+                    if len(rects) > 0:
+                        tracker = cv2.TrackerKCF_create()
+                        tracker.init(frame, tuple(rects[0]))
+                        hasTracked = True
+                        isTracking = True
+                else:
+                    rects = detectPerson(frameGray)
+                    foundPersonRect = refind.refindPerson(lastTrackedFrame, lastTrackedRect, frameGray, rects)
+                    if not foundPersonRect == []:
+                        tracker.init(frame, tuple(foundPersonRect))
+                        isTracking = True
+
+            else:
+                isTracking, rect = tracker.update(frame)
+                rect = [int(i) for i in rect]
+                if isTracking:
+                    lastTrackedFrame = frame
+                    lastTrackedRect = rect
+                    rects = [rect]
                 positionDroneOnPersonCenter(rects[0], imageSize)
-        i=i+1   
+
+                frame = drawRectangles(rects, frame)        
+            cv2.imshow('frame',frame)
+
+        i=i+1
     cap.release()
     cv2.waitKey(0)
     cv2.destroyAllWindows()
