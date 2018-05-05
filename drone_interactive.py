@@ -35,7 +35,7 @@ import libardrone
 import cv2
 import numpy as np
 
-FAKE_VIDEO = True
+FAKE_VIDEO = False
 
 MANUAL_KEYS = [
     pygame.K_w,
@@ -49,7 +49,10 @@ MANUAL_KEYS = [
     pygame.K_h
 ]
 
-W, H = 320, 240
+W, H = 640, 360
+LEFT_RIGHT_THRESHOLD = 40
+LEFT_TURN_THRESHOLD = int(0.5 * W - LEFT_RIGHT_THRESHOLD)
+RIGHT_TURN_THRESHOLD = int(0.5 * W + LEFT_RIGHT_THRESHOLD)
 
 def is_manual_key_pressed():
     pressed = np.array(list(pygame.key.get_pressed()))
@@ -87,7 +90,16 @@ def get_state_manual(event):
 
 def get_state_following(rect, bounds):
     if rect is None:
-        return None
+        return "hover"
+
+    x, y, w, h = rect
+    cx, cy = x + 0.5 * w, y + 0.5 * h
+    W, H = bounds
+
+    if cx > RIGHT_TURN_THRESHOLD:
+        return "turn_right"
+    if cx < LEFT_TURN_THRESHOLD:
+        return "turn_left"
 
     return "hover"
 
@@ -100,8 +112,8 @@ def apply_state(drone, state):
         "move_right" : drone.move_right,
         "move_up" : drone.move_up,
         "move_down" : drone.move_down,
-        "turn_left" : lambda: drone.turn_left(0.5),
-        "turn_right" : lambda: drone.turn_right(0.5),
+        "turn_left" : lambda: drone.turn_left(0.2),
+        "turn_right" : lambda: drone.turn_right(0.2),
         "hold" : lambda: None,
     }
     f = states.get(state, None)
@@ -111,7 +123,10 @@ def apply_state(drone, state):
         f()
 
 class HumanDetector:
-    def __init__(self):
+    def __init__(self, every_nth):
+        self.every_nth = every_nth
+        self.counter = 0
+
         self.hog = cv2.HOGDescriptor()
         self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
@@ -119,6 +134,9 @@ class HumanDetector:
         self.weights = None
     
     def process(self, frame):
+        self.counter = (self.counter + 1) % self.every_nth
+        if self.counter != 0:
+            return
         self.rects, self.weights = self.hog.detectMultiScale(frame, winStride=(8, 8), padding=(8,8), scale=1.2)
 
     def get_rect(self):
@@ -133,13 +151,15 @@ class HumanDetector:
 
         max_weight_i = np.argmax(self.weights)
         for i, ((x, y, w, h), weight) in enumerate(zip(self.rects, self.weights)):
-            x *= 2
-            y *= 2
-            w *= 2
-            h *= 2
+            #x *= 2
+            #y *= 2
+            #w *= 2
+            #h *= 2
 
             color = (255, 255, 255) if i != max_weight_i else (255, 0, 0)
             frame = cv2.rectangle(frame, (x,y), (x+w, y+h), color)
+            if i == max_weight_i:
+                frame = cv2.circle(frame, (int(x + 0.5 * w), int(y + 0.5 * h)), 5, color, -1)
 
             font = cv2.FONT_HERSHEY_SIMPLEX
             frame = cv2.putText(frame, "%.04f" % weight, (x, y - 2), font, 0.5, color, 1, cv2.LINE_8, False)
@@ -147,7 +167,7 @@ class HumanDetector:
 
 def main():
     pygame.init()
-    screen = pygame.display.set_mode((W*2, H*2))
+    screen = pygame.display.set_mode((W, H))
     print "Connecting to drone..."
     drone = libardrone.ARDrone()
     print "Connecting to video stream..."
@@ -161,7 +181,7 @@ def main():
     print "Done."
     clock = pygame.time.Clock()
 
-    detector = HumanDetector()
+    detector = HumanDetector(9)
     following = False
 
     running = True
@@ -234,9 +254,10 @@ def main():
             apply_state(drone, state)
         last_state = state
 
-        render_frame = cv2.resize(frame, (int(W*2), int(H*2)), interpolation=cv2.INTER_NEAREST)
-        render_frame = detector.render_rects(render_frame)
-        surface = pygame.surfarray.make_surface(np.flip(np.rot90(render_frame), 0))
+        frame = cv2.line(frame, (LEFT_TURN_THRESHOLD, 0), (LEFT_TURN_THRESHOLD, H), (0, 255, 0))
+        frame = cv2.line(frame, (RIGHT_TURN_THRESHOLD, 0), (RIGHT_TURN_THRESHOLD, H), (0, 255, 0))
+        frame = detector.render_rects(frame)
+        surface = pygame.surfarray.make_surface(np.flip(np.rot90(frame), 0))
         # battery status
         hud_color = (255, 0, 0) if drone.navdata.get('drone_state', dict()).get('emergency_mask', 1) else (10, 10, 255)
         following_color = (0, 255, 0) if following else (255, 0, 0)
@@ -249,7 +270,7 @@ def main():
         screen.blit(following_label, (10, screen.get_height() - 10 - following_label.get_height()))
 
         pygame.display.flip()
-        clock.tick(20)
+        clock.tick(50)
         pygame.display.set_caption("FPS: %.2f" % clock.get_fps())
 
     print "Shutting down...",
