@@ -9,17 +9,15 @@ from cv2 import calcHist, compareHist
 from operator import add
 
 
-# pass the rect from the first 3 frames. 
-def defineBase(rect, frame):
-    x,y,w,h = rect
-    top = frame[y:y+h/2, x:x+w/2]
-    bottom = frame[y+h/2:y+h/2, x+w/2:x+w/2]
-    basehist_top = calcHist(top)
-    basehist_bottom = calcHist(bottom)
-    return basehist_top, basehist_bottom
+
 
 #compare all the current rects with the base to detect which of them is the rect we are searching for
-def refindPerson(rects, frame, basehist_top, basehist_bottom):
+def refindPerson(baseFrame, baserect, frame, rects):
+    x,y,w,h = baserect
+    base_top = baseFrame[y:y+h/2, x:x+w/2]
+    base_bottom = frame[y+h/2:y+h/2, x+w/2:x+w/2]
+    basehist_top = calcHist(top)
+    basehist_bottom = calcHist(bottom)
     hists_top = []
     hists_bottom = []
     histscores_top = []
