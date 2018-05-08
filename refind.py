@@ -1,12 +1,10 @@
-from imutils.object_detection import non_max_suppression
-from imutils import paths
+#from imutils import paths
 import numpy as np
-import argparse
+#import argparse
 import imutils
-import cv2
-from cmath import rect
+#import cv2
 from cv2 import calcHist, compareHist, imread, COLOR_RGB2HSV
-from operator import add
+
 
 #compare all the current rects with the base to detect which of them is the rect we are searching for
 def refindPerson(baseFrame, baserect, frame, rects):
