@@ -35,7 +35,8 @@ import libardrone
 import cv2
 import numpy as np
 
-FAKE_VIDEO = False
+FAKE_VIDEO = True
+FAKE_VIDEO_PATH = "testVideoStefan.mp4"
 
 MANUAL_KEYS = [
     pygame.K_w,
@@ -54,6 +55,9 @@ LEFT_RIGHT_THRESHOLD = 40
 LEFT_TURN_THRESHOLD = int(0.5 * W - LEFT_RIGHT_THRESHOLD)
 RIGHT_TURN_THRESHOLD = int(0.5 * W + LEFT_RIGHT_THRESHOLD)
 
+MAX_TURN_SPEED = 0.5
+MIN_TURN_SPEED = 0.2
+
 def is_manual_key_pressed():
     pressed = np.array(list(pygame.key.get_pressed()))
     pressed = pressed[MANUAL_KEYS]
@@ -61,47 +65,53 @@ def is_manual_key_pressed():
 
 def get_state_manual(event):
     if event.type == pygame.KEYUP and event.key in MANUAL_KEYS:
-        return "hover"
+        return ("hover", [])
     elif event.type == pygame.KEYDOWN:
         # forward / backward
         if event.key == pygame.K_w:
-            return "move_forward"
+            return ("move_forward", [])
         elif event.key == pygame.K_s:
-            return "move_backward"
+            return ("move_backward", [])
         # left / right
         elif event.key == pygame.K_a:
-            return "move_left"
+            return ("move_left", [])
         elif event.key == pygame.K_d:
-            return "move_right"
+            return ("move_right", [])
         # up / down
         elif event.key == pygame.K_UP:
-            return "move_up"
+            return ("move_up", [])
         elif event.key == pygame.K_DOWN:
-            return "move_down"
+            return ("move_down", [])
         # turn left / turn right
         elif event.key == pygame.K_LEFT:
-            return "turn_left"
+            return ("turn_left", [0.2])
         elif event.key == pygame.K_RIGHT:
-            return "turn_right"
+            return ("turn_right", [0.2])
         # hold drone position (holding also blocks following mode's decisions)
         elif event.key == pygame.K_h:
-            return "hover"
+            return ("hover", [])
     return None
 
 def get_state_following(rect, bounds):
     if rect is None:
-        return "hover"
+        return ("hover", [])
 
     x, y, w, h = rect
     cx, cy = x + 0.5 * w, y + 0.5 * h
     W, H = bounds
 
     if cx > RIGHT_TURN_THRESHOLD:
-        return "turn_right"
+        alpha = (cx - RIGHT_TURN_THRESHOLD) / float(LEFT_TURN_THRESHOLD)
+        alpha = alpha ** 2
+        speed = MIN_TURN_SPEED * (1.0 - alpha) + MAX_TURN_SPEED * alpha
+        return ("turn_right", [speed])
     if cx < LEFT_TURN_THRESHOLD:
-        return "turn_left"
+        alpha = 1.0 - (cx / float(LEFT_TURN_THRESHOLD))
+        alpha = alpha ** 2
+        speed = MIN_TURN_SPEED * (1.0 - alpha) + MAX_TURN_SPEED * alpha
+        return ("turn_left", [speed])
 
-    return "hover"
+    return ("hover", [])
 
 def apply_state(drone, state):
     states = {
@@ -112,15 +122,15 @@ def apply_state(drone, state):
         "move_right" : drone.move_right,
         "move_up" : drone.move_up,
         "move_down" : drone.move_down,
-        "turn_left" : lambda: drone.turn_left(0.2),
-        "turn_right" : lambda: drone.turn_right(0.2),
+        "turn_left" : drone.turn_left,
+        "turn_right" : drone.turn_right,
         "hold" : lambda: None,
     }
-    f = states.get(state, None)
+    f = states.get(state[0], None)
     if f is None:
-        print "### Warning: Unknown state '%s'" % state
+        print "### Warning: Unknown state '%s'" % str(state)
     else:
-        f()
+        f(*state[1])
 
 class HumanDetector:
     def __init__(self, every_nth):
@@ -145,7 +155,7 @@ class HumanDetector:
         # or the one with highest weight?
         return self.rects[np.argmax(self.weights)]
 
-    def render_rects(self, frame):
+    def render_rects(self, frame, object_height):
         if self.rects is None or len(self.rects) == 0:
             return frame
 
@@ -159,33 +169,28 @@ class HumanDetector:
             color = (255, 255, 255) if i != max_weight_i else (255, 0, 0)
             frame = cv2.rectangle(frame, (x,y), (x+w, y+h), color)
             if i == max_weight_i:
-                frame = cv2.circle(frame, (int(x + 0.5 * w), int(y + 0.5 * h)), 5, color, -1)
+                cx = int(x + 0.5 * w)
+                cy = int(y + 0.5 * h)
+                hhx = int(H * object_height / 2.0)
+                frame = cv2.line(frame, (cx, cy-hhx), (cx, cy+hhx), color)
+                frame = cv2.circle(frame, (cx, cy), 5, color, -1)
 
             font = cv2.FONT_HERSHEY_SIMPLEX
             frame = cv2.putText(frame, "%.04f" % weight, (x, y - 2), font, 0.5, color, 1, cv2.LINE_8, False)
         return frame
 
-def main():
+def main(drone, video):
     pygame.init()
     screen = pygame.display.set_mode((W, H))
-    print "Connecting to drone..."
-    drone = libardrone.ARDrone()
-    print "Connecting to video stream..."
-    # video part of api doesn't work
-    # but this works:
-    video = None
-    if not FAKE_VIDEO:
-        video = cv2.VideoCapture("tcp://192.168.1.1:5555")
-    else:
-        video = cv2.VideoCapture("testVideoStefan.mp4")
-    print "Done."
     clock = pygame.time.Clock()
 
-    detector = HumanDetector(9)
+    detector = HumanDetector(6)
     following = False
 
     running = True
     last_state = None
+    last_object_heights = []
+    last_object_heights_n = 6*3
     while running:
         state = None
         for event in pygame.event.get():
@@ -242,21 +247,34 @@ def main():
 
         detector.process(frame)
         rect = detector.get_rect()
+        object_height = 0.0
+        if rect is not None:
+            object_height = rect[3] / float(H)
+
+            last_object_heights.append(object_height)
+            if len(last_object_heights) > last_object_heights_n:
+                last_object_heights.pop(0)
+            object_height = sum(last_object_heights) / float(len(last_object_heights))
+
+            # todo sometimes the average height is much smaller than detected rect
+            # -> with some threshold just take rect, to prevent crash of drone
+        else:
+            last_object_heights = []
 
         if state is None and is_manual_key_pressed():
             state = "hold"
         if state is None and following:
             state = get_state_following(rect, (W, H))
             if state is not None:
-                print "Got following state: %s" % state
+                print "Got following state: %s" % str(state)
         if state is not None and state != last_state:
-            print "Applying state: %s" % state
+            print "Applying state: %s" % str(state)
             apply_state(drone, state)
         last_state = state
 
         frame = cv2.line(frame, (LEFT_TURN_THRESHOLD, 0), (LEFT_TURN_THRESHOLD, H), (0, 255, 0))
         frame = cv2.line(frame, (RIGHT_TURN_THRESHOLD, 0), (RIGHT_TURN_THRESHOLD, H), (0, 255, 0))
-        frame = detector.render_rects(frame)
+        frame = detector.render_rects(frame, object_height)
         surface = pygame.surfarray.make_surface(np.flip(np.rot90(frame), 0))
         # battery status
         hud_color = (255, 0, 0) if drone.navdata.get('drone_state', dict()).get('emergency_mask', 1) else (10, 10, 255)
@@ -265,17 +283,33 @@ def main():
         f = pygame.font.Font(None, 20)
         battery_label = f.render('Battery: %i%%' % bat, True, hud_color)
         following_label = f.render("Following: %s" % following, True, following_color)
+        object_label = f.render("Object height: %0.3f" % object_height, True, (255, 255, 255))
         screen.blit(surface, (0, 0))
         screen.blit(battery_label, (10, 10))
         screen.blit(following_label, (10, screen.get_height() - 10 - following_label.get_height()))
+        screen.blit(object_label, (screen.get_width() - 10 - object_label.get_width(), screen.get_height() - 10 - object_label.get_height()))
 
         pygame.display.flip()
         clock.tick(50)
         pygame.display.set_caption("FPS: %.2f" % clock.get_fps())
 
-    print "Shutting down...",
-    drone.halt()
-    print "Ok."
-
 if __name__ == '__main__':
-    main()
+    print "Connecting to drone..."
+    drone = libardrone.ARDrone()
+    print "Connecting to video stream..."
+    # video part of api doesn't work
+    # but this works:
+    video = None
+    if not FAKE_VIDEO:
+        video = cv2.VideoCapture("tcp://192.168.1.1:5555")
+    else:
+        video = cv2.VideoCapture(FAKE_VIDEO_PATH)
+    print "Done."
+
+    try:
+        main(drone, video)
+    finally:
+        print "Shutting down...",
+        drone.halt()
+        print "Ok."
+
