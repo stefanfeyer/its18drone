@@ -5,15 +5,17 @@ import argparse
 import imutils
 import cv2
 from cmath import rect
-from cv2 import calcHist, compareHist, imread
+from cv2 import calcHist, compareHist, imread, COLOR_RGB2HSV
 from operator import add
 
 #compare all the current rects with the base to detect which of them is the rect we are searching for
 def refindPerson(baseFrame, baserect, frame, rects):
     print "entered refindPerson"
+    baseFrame_hsv = cv2.cvtColor(baseFrame, COLOR_RGB2HSV)
+    frame_hsv = cv2.cvtColor(frame, COLOR_RGB2HSV)
     x,y,w,h = baserect
-    base_top = baseFrame[y:y+h/2, x:x+w]
-    base_bottom = frame[y+h/2:y+h, x:x+w]
+    base_top = baseFrame_hsv[y:y+h/2, x:x+w]
+    base_bottom = frame_hsv[y+h/2:y+h, x:x+w]
     basehist_top = calcHist([base_top], [0], None, [256], [0, 256])
     basehist_bottom = calcHist([base_bottom], [0], None, [256], [0, 256])
     hists_top = []
@@ -23,8 +25,8 @@ def refindPerson(baseFrame, baserect, frame, rects):
 
     for rect in rects:
         x,y,w,h = rect
-        top = frame[y:y+h/2, x:x+w]
-        bottom = frame[y+h/2:y+h, x:x+w]
+        top = frame_hsv[y:y+h/2, x:x+w]
+        bottom = frame_hsv[y+h/2:y+h, x:x+w]
         hist_top = calcHist([top], [0], None, [256], [0, 256])
         hist_bottom = calcHist([bottom], [0], None, [256], [0, 256])
         hists_top.append(hist_top)
