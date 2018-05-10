@@ -36,7 +36,7 @@ import cv2
 import numpy as np
 
 FAKE_VIDEO = True
-FAKE_VIDEO_PATH = "testVideoStefan.mp4"
+FAKE_VIDEO_PATH = "testVideoForwardBackward.mp4"
 
 MANUAL_KEYS = [
     pygame.K_w,
@@ -55,8 +55,29 @@ LEFT_RIGHT_THRESHOLD = 40
 LEFT_TURN_THRESHOLD = int(0.5 * W - LEFT_RIGHT_THRESHOLD)
 RIGHT_TURN_THRESHOLD = int(0.5 * W + LEFT_RIGHT_THRESHOLD)
 
-MAX_TURN_SPEED = 0.5
+MAX_TURN_SPEED = 0.2
 MIN_TURN_SPEED = 0.2
+
+# distance measurements:
+# person (moritz) standing away from drone in different distances -> object height
+# 5m: 0.39
+# 7.5m: 0.49
+# 10m: 0.7
+
+# distance * object_height = F
+# this F should be constant for constant real object height (~averaged human)
+# we obtain 3.7 as average over these samples
+F = 3.7
+
+MIN_DISTANCE = 5
+# keep distance +/- 1 meter
+DISTANCE_WINDOW = 1
+
+def distance(object_height):
+    try:
+        return F / object_height
+    except ZeroDivisionError:
+        return -1
 
 def is_manual_key_pressed():
     pressed = np.array(list(pygame.key.get_pressed()))
@@ -92,7 +113,7 @@ def get_state_manual(event):
             return ("hover", [])
     return None
 
-def get_state_following(rect, bounds):
+def get_state_following(last_state, rect, object_height, object_distance, bounds):
     if rect is None:
         return ("hover", [])
 
@@ -111,6 +132,33 @@ def get_state_following(rect, bounds):
         speed = MIN_TURN_SPEED * (1.0 - alpha) + MAX_TURN_SPEED * alpha
         return ("turn_left", [speed])
 
+    invalid_distance = object_distance < 0
+    before_window = object_distance < MIN_DISTANCE - DISTANCE_WINDOW
+    behind_window = object_distance > MIN_DISTANCE + DISTANCE_WINDOW
+
+    if behind_window:
+        return ("move_forward", [])
+    elif before_window:
+        return ("move_backward", [])
+    elif not invalid_distance:
+        # check what last state was
+        if last_state is None:
+            last_state = ("none", [])
+        if last_state[0] == "move_forward":
+            # stop if object_distance <= min_distance
+            # else continue like that
+            if object_distance <= MIN_DISTANCE:
+                return ("hover", [])
+            else:
+                return ("move_forward", [])
+        if last_state[0] == "move_backward":
+            # stop if object_distance >= min_distance
+            # else continue like that
+            if object_distance >= MIN_DISTANCE:
+                return ("hover", [])
+            else:
+                return ("move_forward", [])
+    
     return ("hover", [])
 
 def apply_state(drone, state):
@@ -184,11 +232,12 @@ def main(drone, video):
     screen = pygame.display.set_mode((W, H))
     clock = pygame.time.Clock()
 
-    detector = HumanDetector(6)
+    detector = HumanDetector(9)
     following = False
 
     running = True
     last_state = None
+    last_following_state = None
     last_object_heights = []
     last_object_heights_n = 6*3
     while running:
@@ -196,7 +245,7 @@ def main(drone, video):
         for event in pygame.event.get():
             state = get_state_manual(event)
             if state is not None:
-                print "Got manual state: %s" % state
+                print "Got manual state: %s" % str(state)
             if event.type == pygame.QUIT:
                 running = False 
             elif event.type == pygame.KEYUP:
@@ -239,6 +288,7 @@ def main(drone, video):
                     pprint.pprint(drone.navdata.get("drone_state", {}))
                 elif event.key == pygame.K_f:
                     following = not following
+                    last_following_state = None
 
         ret, frame = video.read()
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -260,11 +310,13 @@ def main(drone, video):
             # -> with some threshold just take rect, to prevent crash of drone
         else:
             last_object_heights = []
+        object_distance = distance(object_height)
 
         if state is None and is_manual_key_pressed():
             state = "hold"
         if state is None and following:
-            state = get_state_following(rect, (W, H))
+            state = get_state_following(last_following_state, rect, object_height, object_distance, (W, H))
+            last_following_state = state
             if state is not None:
                 print "Got following state: %s" % str(state)
         if state is not None and state != last_state:
@@ -283,14 +335,17 @@ def main(drone, video):
         f = pygame.font.Font(None, 20)
         battery_label = f.render('Battery: %i%%' % bat, True, hud_color)
         following_label = f.render("Following: %s" % following, True, following_color)
-        object_label = f.render("Object height: %0.3f" % object_height, True, (255, 255, 255))
+        object_label = f.render("Object height: %0.3f, distance: %2.2fm" % (object_height, object_distance), True, (255, 255, 255))
         screen.blit(surface, (0, 0))
         screen.blit(battery_label, (10, 10))
         screen.blit(following_label, (10, screen.get_height() - 10 - following_label.get_height()))
         screen.blit(object_label, (screen.get_width() - 10 - object_label.get_width(), screen.get_height() - 10 - object_label.get_height()))
 
         pygame.display.flip()
-        clock.tick(50)
+        if FAKE_VIDEO:
+            clock.tick(20)
+        else:
+            clock.tick(0)
         pygame.display.set_caption("FPS: %.2f" % clock.get_fps())
 
 if __name__ == '__main__':
@@ -309,7 +364,8 @@ if __name__ == '__main__':
     try:
         main(drone, video)
     finally:
-        print "Shutting down...",
+        print "Shutting down..."
+        drone.land()
         drone.halt()
         print "Ok."
 
