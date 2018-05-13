@@ -36,27 +36,70 @@ import cv2
 import numpy as np
 
 FAKE_VIDEO = True
-FAKE_VIDEO_PATH = "testVideoForwardBackward.mp4"
+FAKE_VIDEO_PATH = "testVideoStefan.mp4"
 
-MANUAL_KEYS = [
-    pygame.K_w,
-    pygame.K_s,
-    pygame.K_a,
-    pygame.K_d,
-    pygame.K_UP,
-    pygame.K_DOWN,
-    pygame.K_LEFT,
-    pygame.K_RIGHT,
-    pygame.K_h
+I_MOVE = 0
+I_MOVE_RIGHT = 1
+I_MOVE_BACKWARD = 2
+I_MOVE_UP = 3
+I_TURN_RIGHT = 4
+
+MOVEMENTS = {
+    pygame.K_w : (I_MOVE_BACKWARD, -1),
+    pygame.K_s : (I_MOVE_BACKWARD, 1),
+    pygame.K_a : (I_MOVE_RIGHT, -1),
+    pygame.K_d : (I_MOVE_RIGHT, 1),
+    pygame.K_UP : (I_MOVE_UP, 1),
+    pygame.K_DOWN : (I_MOVE_UP, -1),
+    pygame.K_LEFT : (I_TURN_RIGHT, -1),
+    pygame.K_RIGHT : (I_TURN_RIGHT, 1),
+}
+
+MOVEMENT_NAMES = [
+    ("", ""),
+    ("right", "left"),
+    ("forward", "backward"),
+    ("up", "down"),
+    ("turn right", "turn left")
 ]
+
+def state_none():
+    return [None] * 5
+
+def state_hover(empty=False):
+    if empty:
+        return [False, None, None, None, None]
+    return [False, 0, 0, 0, 0]
+
+def state_move(empty=False):
+    if empty:
+        return [True, None, None, None, None]
+    return [True, 0, 0, 0, 0]
+
+# adds the two
+# prefers state2's entries if they are not none
+def join_states(state1, state2=state_hover()):
+    assert len(state1), len(state2) == (5, 5)
+    state = [None] * 5
+    for i, (e1, e2) in enumerate(zip(state1, state2)):
+        state[i] = e2 if e2 is not None else e1
+    return state
 
 W, H = 640, 360
 LEFT_RIGHT_THRESHOLD = 40
 LEFT_TURN_THRESHOLD = int(0.5 * W - LEFT_RIGHT_THRESHOLD)
 RIGHT_TURN_THRESHOLD = int(0.5 * W + LEFT_RIGHT_THRESHOLD)
 
-MAX_TURN_SPEED = 0.2
+MAX_TURN_SPEED = 0.4
 MIN_TURN_SPEED = 0.2
+MIN_FORWARD_SPEED = 0.1
+
+SPEED = {
+    I_TURN_RIGHT: 2,
+    I_MOVE_UP: 2,
+    I_MOVE_RIGHT: 3,
+    I_MOVE_BACKWARD: 2
+}
 
 # distance measurements:
 # person (moritz) standing away from drone in different distances -> object height
@@ -69,7 +112,7 @@ MIN_TURN_SPEED = 0.2
 # we obtain 3.7 as average over these samples
 F = 3.7
 
-MIN_DISTANCE = 5
+MIN_DISTANCE = 8
 # keep distance +/- 1 meter
 DISTANCE_WINDOW = 1
 
@@ -79,43 +122,49 @@ def distance(object_height):
     except ZeroDivisionError:
         return -1
 
-def is_manual_key_pressed():
-    pressed = np.array(list(pygame.key.get_pressed()))
-    pressed = pressed[MANUAL_KEYS]
-    return np.any(pressed != 0)
+pressed_keys = list()
+def get_current_manual_state(state=None):
+    if state is None:
+        state = state_move(empty=True)
+    for key in pressed_keys:
+        state_index, state_factor = MOVEMENTS.get(key, (None, None))
+        if state_index is None:
+            continue
+        state_factor *= SPEED.get(state_index, 1)
+        state[state_index] = state_factor * 0.1
+    return state
 
 def get_state_manual(event):
-    if event.type == pygame.KEYUP and event.key in MANUAL_KEYS:
-        return ("hover", [])
+    global pressed_keys
+    def with_pressed(state):
+        return get_current_manual_state(state)
+
+    if event.type not in (pygame.KEYUP, pygame.KEYDOWN):
+        return with_pressed(state_none())
+
+    state_index, state_factor = MOVEMENTS.get(event.key, (None, None))
+    if state_index is None:
+        return with_pressed(state_none())
+
+    # let's just use a move state as base here
+    # states with all movements 0 will be converted to hover state automatically
+    state = state_move(empty=True)
+
+    if event.type == pygame.KEYUP:
+        #assert not pygame.key.get_pressed()[event.key]
+        pressed_keys.remove(event.key)
+        state[state_index] = 0
+        #print "up:", pressed_keys
     elif event.type == pygame.KEYDOWN:
-        # forward / backward
-        if event.key == pygame.K_w:
-            return ("move_forward", [])
-        elif event.key == pygame.K_s:
-            return ("move_backward", [])
-        # left / right
-        elif event.key == pygame.K_a:
-            return ("move_left", [])
-        elif event.key == pygame.K_d:
-            return ("move_right", [])
-        # up / down
-        elif event.key == pygame.K_UP:
-            return ("move_up", [])
-        elif event.key == pygame.K_DOWN:
-            return ("move_down", [])
-        # turn left / turn right
-        elif event.key == pygame.K_LEFT:
-            return ("turn_left", [0.2])
-        elif event.key == pygame.K_RIGHT:
-            return ("turn_right", [0.2])
-        # hold drone position (holding also blocks following mode's decisions)
-        elif event.key == pygame.K_h:
-            return ("hover", [])
-    return None
+        #assert pygame.key.get_pressed()[event.key]
+        pressed_keys.append(event.key)
+        #print "down:", pressed_keys
+    return with_pressed(state)
 
 def get_state_following(last_state, rect, object_height, object_distance, bounds):
     if rect is None:
-        return ("hover", [])
+        return state_hover()
+    state = state_move(empty=True)
 
     x, y, w, h = rect
     cx, cy = x + 0.5 * w, y + 0.5 * h
@@ -125,60 +174,74 @@ def get_state_following(last_state, rect, object_height, object_distance, bounds
         alpha = (cx - RIGHT_TURN_THRESHOLD) / float(LEFT_TURN_THRESHOLD)
         alpha = alpha ** 2
         speed = MIN_TURN_SPEED * (1.0 - alpha) + MAX_TURN_SPEED * alpha
-        return ("turn_right", [speed])
-    if cx < LEFT_TURN_THRESHOLD:
+        state[I_TURN_RIGHT] = speed
+        #return ("turn_right", [speed])
+    elif cx < LEFT_TURN_THRESHOLD:
         alpha = 1.0 - (cx / float(LEFT_TURN_THRESHOLD))
         alpha = alpha ** 2
         speed = MIN_TURN_SPEED * (1.0 - alpha) + MAX_TURN_SPEED * alpha
-        return ("turn_left", [speed])
+        state[I_TURN_RIGHT] = -speed
+        #return ("turn_left", [speed])
+    else:
+        state[I_TURN_RIGHT] = 0
 
     invalid_distance = object_distance < 0
     before_window = object_distance < MIN_DISTANCE - DISTANCE_WINDOW
     behind_window = object_distance > MIN_DISTANCE + DISTANCE_WINDOW
 
     if behind_window:
-        return ("move_forward", [])
+        # move forward when behind window (= too far away from person)
+        state[I_MOVE_BACKWARD] = -MIN_FORWARD_SPEED
+        #return ("move_forward", [])
     elif before_window:
-        return ("move_backward", [])
+        # move backward when before window (= too near to person)
+        state[I_MOVE_BACKWARD] = MIN_FORWARD_SPEED
+        #return ("move_backward", [])
     elif not invalid_distance:
         # check what last state was
-        if last_state is None:
-            last_state = ("none", [])
-        if last_state[0] == "move_forward":
-            # stop if object_distance <= min_distance
+        if last_state[I_MOVE_BACKWARD] < 0:
+            # when we were moving forward
+            # stop if object_distance <= min_distance (flew far enough into the window)
             # else continue like that
             if object_distance <= MIN_DISTANCE:
-                return ("hover", [])
+                state[I_MOVE_BACKWARD] = 0
+                #return ("hover", [])
             else:
-                return ("move_forward", [])
-        if last_state[0] == "move_backward":
-            # stop if object_distance >= min_distance
+                state[I_MOVE_BACKWARD] = -MIN_FORWARD_SPEED
+                #return ("move_forward", [])
+        if last_state[I_MOVE_BACKWARD] > 0:
+            # when we were moving backward
+            # stop if object_distance >= min_distance (flew far enough back into the window)
             # else continue like that
             if object_distance >= MIN_DISTANCE:
-                return ("hover", [])
+                state[I_MOVE_BACKWARD] = 0
+                #return ("hover", [])
             else:
-                return ("move_forward", [])
+                state[I_MOVE_BACKWARD] = MIN_FORWARD_SPEED
+                #return ("move_backward", [])
     
-    return ("hover", [])
+    return state
 
 def apply_state(drone, state):
-    states = {
-        "hover" : drone.hover,
-        "move_forward" : drone.move_forward,
-        "move_backward" : drone.move_backward,
-        "move_left" : drone.move_left,
-        "move_right" : drone.move_right,
-        "move_up" : drone.move_up,
-        "move_down" : drone.move_down,
-        "turn_left" : drone.turn_left,
-        "turn_right" : drone.turn_right,
-        "hold" : lambda: None,
-    }
-    f = states.get(state[0], None)
-    if f is None:
-        print "### Warning: Unknown state '%s'" % str(state)
-    else:
-        f(*state[1])
+    #states = {
+    #    "hover" : drone.hover,
+    #    "move_forward" : drone.move_forward,
+    #    "move_backward" : drone.move_backward,
+    #    "move_left" : drone.move_left,
+    #    "move_right" : drone.move_right,
+    #    "move_up" : drone.move_up,
+    #    "move_down" : drone.move_down,
+    #    "turn_left" : drone.turn_left,
+    #    "turn_right" : drone.turn_right,
+    #    "hold" : lambda: None,
+    #}
+    #f = states.get(state[0], None)
+    #if f is None:
+    #    print "### Warning: Unknown state '%s'" % str(state)
+    #else:
+    #    f(*state[1])
+
+    drone.set_move(state)
 
 class HumanDetector:
     def __init__(self, every_nth):
@@ -236,20 +299,21 @@ def main(drone, video):
     following = False
 
     running = True
-    last_state = None
+    last_state = state_hover()
     last_following_state = None
     last_object_heights = []
     last_object_heights_n = 6*3
     while running:
-        state = None
+        manual_state = get_current_manual_state()
         for event in pygame.event.get():
-            state = get_state_manual(event)
-            if state is not None:
-                print "Got manual state: %s" % str(state)
+            # events have to be joined together because keyup (setting speed in state to 0) appear only once
+            manual_state = join_states(manual_state, get_state_manual(event))
+            #if state is not None:
+            #    print "Got manual state: %s" % str(state)
             if event.type == pygame.QUIT:
                 running = False 
-            elif event.type == pygame.KEYUP:
-                drone.hover()
+            #elif event.type == pygame.KEYUP:
+            #    drone.hover()
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     drone.reset()
@@ -288,7 +352,7 @@ def main(drone, video):
                     pprint.pprint(drone.navdata.get("drone_state", {}))
                 elif event.key == pygame.K_f:
                     following = not following
-                    last_following_state = None
+                    last_following_state = state_none()
 
         ret, frame = video.read()
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -312,17 +376,35 @@ def main(drone, video):
             last_object_heights = []
         object_distance = distance(object_height)
 
-        if state is None and is_manual_key_pressed():
-            state = "hold"
-        if state is None and following:
-            state = get_state_following(last_following_state, rect, object_height, object_distance, (W, H))
-            last_following_state = state
-            if state is not None:
-                print "Got following state: %s" % str(state)
-        if state is not None and state != last_state:
+        following_state = state_none()
+        if following:
+            following_state = get_state_following(last_following_state, rect, object_height, object_distance, (W, H))
+            last_following_state = following_state
+
+        # last state + following_state + manual state
+        state = join_states(following_state, manual_state)
+        #state = manual_state
+        state = join_states(state_hover(), state)
+        #state = join_states(last_state, following_state)
+        #state = join_states(state, manual_state)
+        if all(map(lambda x: x == 0, state[1:])):
+            #print "Converting state to hover"
+            state = state_hover()
+
+        if state != last_state:
             print "Applying state: %s" % str(state)
             apply_state(drone, state)
         last_state = state
+
+        state_reprs = []
+        for i, x in enumerate(state):
+            if i == 0:
+                continue
+            if x > 0:
+                state_reprs.append(MOVEMENT_NAMES[i][0])
+            elif x < 0:
+                state_reprs.append(MOVEMENT_NAMES[i][1])
+        state_repr = ", ".join(state_reprs)
 
         frame = cv2.line(frame, (LEFT_TURN_THRESHOLD, 0), (LEFT_TURN_THRESHOLD, H), (0, 255, 0))
         frame = cv2.line(frame, (RIGHT_TURN_THRESHOLD, 0), (RIGHT_TURN_THRESHOLD, H), (0, 255, 0))
@@ -334,10 +416,12 @@ def main(drone, video):
         bat = drone.navdata.get(0, dict()).get('battery', 0)
         f = pygame.font.Font(None, 20)
         battery_label = f.render('Battery: %i%%' % bat, True, hud_color)
+        state_label = f.render(state_repr, True, (0, 255, 255))
         following_label = f.render("Following: %s" % following, True, following_color)
         object_label = f.render("Object height: %0.3f, distance: %2.2fm" % (object_height, object_distance), True, (255, 255, 255))
         screen.blit(surface, (0, 0))
         screen.blit(battery_label, (10, 10))
+        screen.blit(state_label, (10, screen.get_height() - 10 - following_label.get_height() - state_label.get_height()))
         screen.blit(following_label, (10, screen.get_height() - 10 - following_label.get_height()))
         screen.blit(object_label, (screen.get_width() - 10 - object_label.get_width(), screen.get_height() - 10 - object_label.get_height()))
 

@@ -106,13 +106,22 @@ class ARDrone(object):
         """Make the drone move backwards."""
         self.at(at_pcmd, True, 0, self.speed, 0, 0)
 
-    def turn_left(self):
+    def turn_left(self, speed=None):
         """Make the drone rotate left."""
-        self.at(at_pcmd, True, 0, 0, 0, -self.speed)
+        if speed is None:
+            speed = self.speed
+        self.at(at_pcmd, True, 0, 0, 0, -speed)
 
-    def turn_right(self):
+    def turn_right(self, speed=None):
         """Make the drone rotate right."""
-        self.at(at_pcmd, True, 0, 0, 0, self.speed)
+        if speed is None:
+            speed = self.speed
+        self.at(at_pcmd, True, 0, 0, 0, speed)
+
+    def set_move(self, state):
+        assert len(state) == 5
+        assert not any(map(lambda x: x is None, state))
+        self.at(at_pcmd, *state)
 
     def reset(self):
         """Toggle the drone's emergency state."""
