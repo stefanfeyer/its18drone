@@ -28,6 +28,7 @@ stream.
 """
 
 
+import argparse
 import pygame
 import sys
 import datetime
@@ -37,11 +38,6 @@ import libardrone
 import cv2
 import numpy as np
 import math
-
-FAKE_VIDEO = True
-FAKE_VIDEO_PATH = "video_2018-05-13_21_30_29.mp4"
-#FAKE_VIDEO_PATH = "testVideoForwardBackward.mp4"
-#FAKE_VIDEO_PATH = "/home/moritz/dev/hpi/its-project/its18drone/video_2018-05-13_19_46_12.mp4"
 
 I_MOVE = 0
 I_MOVE_RIGHT = 1
@@ -376,7 +372,7 @@ class HumanDetector:
                 frame = cv2.putText(frame, "%.04f" % weight, (x, y - 2), font, 0.5, color, 1, cv2.LINE_8, False)
         return frame
 
-def main(drone, video, videoout, videoout_hud):
+def main(args, drone, video, videoout, videoout_hud):
     pygame.init()
     screen = pygame.display.set_mode((W, H))
     clock = pygame.time.Clock()
@@ -440,17 +436,17 @@ def main(drone, video, videoout, videoout_hud):
                 elif event.key == pygame.K_f:
                     following = not following
                     last_following_state = state_none()
-                elif event.key == pygame.K_COMMA and FAKE_VIDEO:
+                elif event.key == pygame.K_COMMA and args.fake_video:
                     frame_i = video.get(cv2.CAP_PROP_POS_FRAMES)
                     fps = video.get(cv2.CAP_PROP_FPS)
                     video.set(cv2.CAP_PROP_POS_FRAMES, frame_i - 3*fps)
-                elif event.key == pygame.K_PERIOD and FAKE_VIDEO:
+                elif event.key == pygame.K_PERIOD and args.fake_video:
                     frame_i = video.get(cv2.CAP_PROP_POS_FRAMES)
                     fps = video.get(cv2.CAP_PROP_FPS)
                     video.set(cv2.CAP_PROP_POS_FRAMES, frame_i + 3*fps)
 
         ret, frame = video.read()
-        if FAKE_VIDEO:
+        if args.fake_video:
             frame = cv2.resize(frame, (W, H))
         if videoout:
             videoout.write(frame)
@@ -578,37 +574,44 @@ def main(drone, video, videoout, videoout_hud):
             videoout_hud.write(frame_hud)
 
         pygame.display.flip()
-        if FAKE_VIDEO:
+        if args.fake_video:
             clock.tick(30)
         else:
             clock.tick(0)
         pygame.display.set_caption("FPS: %.2f" % clock.get_fps())
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="")
+    parser.add_argument("--fake-video", "-f", default=None, type=str)
+    parser.add_argument("--record", default=False, action="store_true")
+    parser.add_argument("--record-hud", default=False, action="store_true")
+
+    args = parser.parse_args()
+
     print "Connecting to drone..."
     drone = libardrone.ARDrone()
     print "Connecting to video stream..."
     # video part of api doesn't work
     # but this works:
     video = None
-    if not FAKE_VIDEO:
+    if not args.fake_video:
         video = cv2.VideoCapture("tcp://192.168.1.1:5555")
     else:
-        video = cv2.VideoCapture(FAKE_VIDEO_PATH)
+        video = cv2.VideoCapture(args.fake_video)
     print "Done."
 
-    videoout, videoout_hud = None, None
-    if len(sys.argv) > 1 and sys.argv[1] == "--record":
-        now = datetime.datetime.now()
-        filename = now.strftime("video_%Y-%m-%d_%H_%M_%S.mp4")
-        filename_hud = now.strftime("videohud_%Y-%m-%d_%H_%M_%S.mp4")
-        fourcc = cv2.VideoWriter_fourcc(*"XVID")
-        if not FAKE_VIDEO:
-            videoout = cv2.VideoWriter(filename, fourcc, 30, (W, H))
-        #videoout_hud = cv2.VideoWriter(filename_hud, fourcc, 30, (W, H))
+    videoout, videout_hud = None, None
+    now = datetime.datetime.now()
+    filename = now.strftime("video_%Y-%m-%d_%H_%M_%S.mp4")
+    filename_hud = now.strftime("videohud_%Y-%m-%d_%H_%M_%S.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*"XVID")
+    if args.record:
+        videoout = cv2.VideoWriter(filename, fourcc, 30, (W, H))
+    if args.record_hud:
+        videoout_hud = cv2.VideoWriter(filename_hud, fourcc, 30, (W, H))
 
     try:
-        main(drone, video, videoout, videoout_hud)
+        main(args, drone, video, videoout, videout_hud)
     finally:
         print "Shutting down..."
         drone.land()
@@ -618,4 +621,7 @@ if __name__ == '__main__':
         if videoout:
             videoout.release()
             del videoout
+        if videout_hud:
+            videout_hud.release()
+            del videout_hud
 
