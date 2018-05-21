@@ -29,14 +29,19 @@ stream.
 
 
 import pygame
+import sys
+import datetime
 
 import libardrone
 
 import cv2
 import numpy as np
+import math
 
 FAKE_VIDEO = True
-FAKE_VIDEO_PATH = "testVideoStefan.mp4"
+FAKE_VIDEO_PATH = "video_2018-05-13_21_30_29.mp4"
+#FAKE_VIDEO_PATH = "testVideoForwardBackward.mp4"
+#FAKE_VIDEO_PATH = "/home/moritz/dev/hpi/its-project/its18drone/video_2018-05-13_19_46_12.mp4"
 
 I_MOVE = 0
 I_MOVE_RIGHT = 1
@@ -58,7 +63,7 @@ MOVEMENTS = {
 MOVEMENT_NAMES = [
     ("", ""),
     ("right", "left"),
-    ("forward", "backward"),
+    ("backward", "forward"),
     ("up", "down"),
     ("turn right", "turn left")
 ]
@@ -85,6 +90,19 @@ def join_states(state1, state2=state_hover()):
         state[i] = e2 if e2 is not None else e1
     return state
 
+FOV = 62
+def sign(x):
+    return -1.0 if x < 0 else 1.0
+def angle(cx, object_distance):
+    # width we can see at the object distance (in meters)
+    fov_width = math.tan(math.radians(0.5 * FOV)) * 2*object_distance
+    # distance of object center from screen center (in pixels)
+    pixel_delta = cx - 0.5 * W
+    # distance of object center from screen center (in [0;0.5] on both sides)
+    rel_delta = abs(pixel_delta) / W
+    movement_width = rel_delta * fov_width
+    return math.degrees(math.atan(movement_width / object_distance)) * sign(pixel_delta)
+
 W, H = 640, 360
 LEFT_RIGHT_THRESHOLD = 40
 LEFT_TURN_THRESHOLD = int(0.5 * W - LEFT_RIGHT_THRESHOLD)
@@ -93,6 +111,44 @@ RIGHT_TURN_THRESHOLD = int(0.5 * W + LEFT_RIGHT_THRESHOLD)
 MAX_TURN_SPEED = 0.4
 MIN_TURN_SPEED = 0.2
 MIN_FORWARD_SPEED = 0.1
+
+def mix(alpha, a, b):
+    return a * (1.0 - alpha) + b * alpha
+
+def turn_speed(cx):
+    alpha = 0.0
+    if cx > RIGHT_TURN_THRESHOLD:
+        alpha = (cx - RIGHT_TURN_THRESHOLD) / float(LEFT_TURN_THRESHOLD)
+    elif cx < LEFT_TURN_THRESHOLD:
+        alpha = 1.0 - (cx / float(LEFT_TURN_THRESHOLD))
+    else:
+        return 0.0
+    #thresh = 0.1
+    #if alpha < thresh:
+    #    alpha = alpha / thresh
+    #    #alpha = alpha ** 2
+    #    speed = mix(alpha, 0.05, 0.15)
+    #else:
+    #    alpha = (alpha - thresh) / (1.0 - thresh)
+    #    #alpha = alpha ** 0.5
+    #    speed = mix(alpha, 0.15, 0.4)
+    alpha = alpha ** 2
+    #alpha = alpha ** 0.5
+    speed = mix(alpha, MIN_TURN_SPEED, MAX_TURN_SPEED)
+    return speed
+
+def forward_speed(object_distance):
+    window_distance = abs(object_distance - MIN_DISTANCE)
+    speed = 0.0
+    if window_distance < DISTANCE_WINDOW / 2:
+        speed = 0.05
+    elif window_distance < DISTANCE_WINDOW:
+        speed = 0.05
+    elif window_distance < DISTANCE_WINDOW + 4:
+        speed = 0.1
+    else:
+        speed = 0.2
+    return speed
 
 SPEED = {
     I_TURN_RIGHT: 2,
@@ -112,7 +168,7 @@ SPEED = {
 # we obtain 3.7 as average over these samples
 F = 3.7
 
-MIN_DISTANCE = 8
+MIN_DISTANCE = 6
 # keep distance +/- 1 meter
 DISTANCE_WINDOW = 1
 
@@ -186,16 +242,18 @@ def get_state_following(last_state, rect, object_height, object_distance, bounds
         state[I_TURN_RIGHT] = 0
 
     invalid_distance = object_distance < 0
-    before_window = object_distance < MIN_DISTANCE - DISTANCE_WINDOW
-    behind_window = object_distance > MIN_DISTANCE + DISTANCE_WINDOW
+    before_window = object_distance < MIN_DISTANCE - DISTANCE_WINDOW and not invalid_distance
+    behind_window = object_distance > MIN_DISTANCE + DISTANCE_WINDOW and not invalid_distance
 
+    speed = forward_speed(object_distance)
+    assert speed >= 0
     if behind_window:
         # move forward when behind window (= too far away from person)
-        state[I_MOVE_BACKWARD] = -MIN_FORWARD_SPEED
+        state[I_MOVE_BACKWARD] = -speed
         #return ("move_forward", [])
     elif before_window:
         # move backward when before window (= too near to person)
-        state[I_MOVE_BACKWARD] = MIN_FORWARD_SPEED
+        state[I_MOVE_BACKWARD] = speed
         #return ("move_backward", [])
     elif not invalid_distance:
         # check what last state was
@@ -207,7 +265,7 @@ def get_state_following(last_state, rect, object_height, object_distance, bounds
                 state[I_MOVE_BACKWARD] = 0
                 #return ("hover", [])
             else:
-                state[I_MOVE_BACKWARD] = -MIN_FORWARD_SPEED
+                state[I_MOVE_BACKWARD] = -speed
                 #return ("move_forward", [])
         if last_state[I_MOVE_BACKWARD] > 0:
             # when we were moving backward
@@ -217,8 +275,11 @@ def get_state_following(last_state, rect, object_height, object_distance, bounds
                 state[I_MOVE_BACKWARD] = 0
                 #return ("hover", [])
             else:
-                state[I_MOVE_BACKWARD] = MIN_FORWARD_SPEED
+                state[I_MOVE_BACKWARD] = speed
                 #return ("move_backward", [])
+    else:
+        print "Distance invalid!"
+
     
     return state
 
@@ -247,50 +308,75 @@ class HumanDetector:
     def __init__(self, every_nth):
         self.every_nth = every_nth
         self.counter = 0
+        self.tcounter = 0
 
         self.hog = cv2.HOGDescriptor()
         self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
-        self.rects = None
-        self.weights = None
-    
+        self.drects = None
+        self.dweights = None
+
+        self.tracker = None
+        self.trect = None
+
+    def init_tracker(self, frame, rect):
+        self.tracker = cv2.TrackerKCF_create()
+        self.tracker.init(frame, tuple(rect))
+
     def process(self, frame):
+        self.tcounter = (self.tcounter + 1) % 3
+        if self.tracker and self.tcounter == 0:
+            found, rect = self.tracker.update(frame)
+            if found:
+                self.trect = tuple(map(int, rect))
+            else:
+                self.tracker = None
+                self.trect = None
+
         self.counter = (self.counter + 1) % self.every_nth
         if self.counter != 0:
             return
-        self.rects, self.weights = self.hog.detectMultiScale(frame, winStride=(8, 8), padding=(8,8), scale=1.2)
+        self.drects, self.dweights = self.hog.detectMultiScale(frame, winStride=(8, 8), padding=(8,8), scale=1.2)
+
+        if len(self.drects) != 0:
+            rect = self.drects[np.argmax(self.dweights)]
+            self.init_tracker(frame, rect)
 
     def get_rect(self):
-        if self.rects is None or len(self.rects) == 0:
-            return None
-        # or the one with highest weight?
-        return self.rects[np.argmax(self.weights)]
+        if self.drects is None or len(self.drects) == 0:
+            return self.trect
+        return self.drects[np.argmax(self.dweights)]
 
     def render_rects(self, frame, object_height):
-        if self.rects is None or len(self.rects) == 0:
-            return frame
+        if self.drects is None or len(self.drects) == 0:
+            # TODO tracked rect
+            if self.trect is None:
+                return frame
+            x, y, w, h = self.trect
+            color = (0, 0, 255)
+            frame = cv2.rectangle(frame, (x, y), (x+w, y+h), color)
+        else:
+            max_weight_i = np.argmax(self.dweights)
+            for i, ((x, y, w, h), weight) in enumerate(zip(self.drects, self.dweights)):
+                #x *= 2
+                #y *= 2
+                #w *= 2
+                #h *= 2
 
-        max_weight_i = np.argmax(self.weights)
-        for i, ((x, y, w, h), weight) in enumerate(zip(self.rects, self.weights)):
-            #x *= 2
-            #y *= 2
-            #w *= 2
-            #h *= 2
+                color = (255, 255, 255) if i != max_weight_i else (255, 0, 0)
+                frame = cv2.rectangle(frame, (x,y), (x+w, y+h), color)
+                if i == max_weight_i:
+                    cx = int(x + 0.5 * w)
+                    cy = int(y + 0.5 * h)
+                    hhx = int(H * object_height / 2.0)
+                    frame = cv2.line(frame, (cx, cy-hhx), (cx, cy+hhx), color)
+                    frame = cv2.circle(frame, (cx, cy), 5, color, -1)
 
-            color = (255, 255, 255) if i != max_weight_i else (255, 0, 0)
-            frame = cv2.rectangle(frame, (x,y), (x+w, y+h), color)
-            if i == max_weight_i:
-                cx = int(x + 0.5 * w)
-                cy = int(y + 0.5 * h)
-                hhx = int(H * object_height / 2.0)
-                frame = cv2.line(frame, (cx, cy-hhx), (cx, cy+hhx), color)
-                frame = cv2.circle(frame, (cx, cy), 5, color, -1)
-
-            font = cv2.FONT_HERSHEY_SIMPLEX
-            frame = cv2.putText(frame, "%.04f" % weight, (x, y - 2), font, 0.5, color, 1, cv2.LINE_8, False)
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                frame = cv2.putText(frame, "%.04f" % weight, (x, y - 2), font, 0.5, color, 1, cv2.LINE_8, False)
         return frame
 
-def main(drone, video):
+def main(drone, video, videoout, videoout_hud):
     pygame.init()
     screen = pygame.display.set_mode((W, H))
     clock = pygame.time.Clock()
@@ -303,6 +389,7 @@ def main(drone, video):
     last_following_state = None
     last_object_heights = []
     last_object_heights_n = 6*3
+    #dat = open("test.dat", "w")
     while running:
         manual_state = get_current_manual_state()
         for event in pygame.event.get():
@@ -353,15 +440,28 @@ def main(drone, video):
                 elif event.key == pygame.K_f:
                     following = not following
                     last_following_state = state_none()
+                elif event.key == pygame.K_COMMA and FAKE_VIDEO:
+                    frame_i = video.get(cv2.CAP_PROP_POS_FRAMES)
+                    fps = video.get(cv2.CAP_PROP_FPS)
+                    video.set(cv2.CAP_PROP_POS_FRAMES, frame_i - 3*fps)
+                elif event.key == pygame.K_PERIOD and FAKE_VIDEO:
+                    frame_i = video.get(cv2.CAP_PROP_POS_FRAMES)
+                    fps = video.get(cv2.CAP_PROP_FPS)
+                    video.set(cv2.CAP_PROP_POS_FRAMES, frame_i + 3*fps)
 
         ret, frame = video.read()
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         if FAKE_VIDEO:
             frame = cv2.resize(frame, (W, H))
+        if videoout:
+            videoout.write(frame)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
         detector.process(frame)
         rect = detector.get_rect()
         object_height = 0.0
+        object_distance = -1.0
+        object_angle = 0.0
+        threshold_angle = 0.0
         if rect is not None:
             object_height = rect[3] / float(H)
 
@@ -372,9 +472,14 @@ def main(drone, video):
 
             # todo sometimes the average height is much smaller than detected rect
             # -> with some threshold just take rect, to prevent crash of drone
+            # later note: psssssh that was just a bug
+
+            object_distance = distance(object_height)
+            cx = rect[0] + rect[2] * 0.5
+            object_angle = angle(cx, object_distance)
+            threshold_angle = angle(LEFT_TURN_THRESHOLD, object_distance)
         else:
             last_object_heights = []
-        object_distance = distance(object_height)
 
         following_state = state_none()
         if following:
@@ -396,6 +501,10 @@ def main(drone, video):
             apply_state(drone, state)
         last_state = state
 
+        #dat.write(str(object_distance))
+        #dat.write("\n")
+        #dat.flush()
+
         state_reprs = []
         for i, x in enumerate(state):
             if i == 0:
@@ -408,6 +517,24 @@ def main(drone, video):
 
         frame = cv2.line(frame, (LEFT_TURN_THRESHOLD, 0), (LEFT_TURN_THRESHOLD, H), (0, 255, 0))
         frame = cv2.line(frame, (RIGHT_TURN_THRESHOLD, 0), (RIGHT_TURN_THRESHOLD, H), (0, 255, 0))
+        #poly = []
+        #for x in range(0, W):
+        #    speed = turn_speed(x)
+        #    poly.append([x, int(0.5 * H - speed / 0.4 * 50)])
+        #frame = cv2.polylines(frame, [np.array(poly)], False, (0, 255, 0))
+        def draw_angle(a, length, color, frame=frame):
+            actual_a = abs(a)
+            p1 = (W / 2, H)
+            dx = math.sin(math.radians(actual_a)) * length
+            dy = math.sin(math.radians(90.0 - actual_a)) * length
+            p2 = (int(p1[0] + sign(a) * dx), int(p1[1] - dy))
+            frame = cv2.line(frame, p1, p2, color)
+        #draw_angle(-FOV / 2.0, 200, (0, 0, 255))
+        #draw_angle(FOV / 2.0, 200, (0, 0, 255))
+        #draw_angle(-threshold_angle, 200, (0, 255, 0))
+        #draw_angle(threshold_angle, 200, (0, 255, 0))
+        #draw_angle(object_angle, 200, (0, 255, 255))
+
         frame = detector.render_rects(frame, object_height)
         surface = pygame.surfarray.make_surface(np.flip(np.rot90(frame), 0))
         # battery status
@@ -418,16 +545,41 @@ def main(drone, video):
         battery_label = f.render('Battery: %i%%' % bat, True, hud_color)
         state_label = f.render(state_repr, True, (0, 255, 255))
         following_label = f.render("Following: %s" % following, True, following_color)
-        object_label = f.render("Object height: %0.3f, distance: %2.2fm" % (object_height, object_distance), True, (255, 255, 255))
+
+        angle_label = f.render("Angle: %2.2f" % object_angle, True, (255, 255, 0))
+
+        window_distance = object_distance - MIN_DISTANCE
+        window_color = (0, 255, 0)
+        if window_distance < -DISTANCE_WINDOW:
+            window_color = (255, 0, 0)
+        elif window_distance > DISTANCE_WINDOW:
+            window_color = (255, 255, 0)
+        window_label = f.render("Window: %0.3f" % window_distance, True, window_color)
+        
+        object_label = f.render("Height: %0.3f, d: %2.2fm" % (object_height, object_distance), True, (255, 255, 255))
+
         screen.blit(surface, (0, 0))
         screen.blit(battery_label, (10, 10))
         screen.blit(state_label, (10, screen.get_height() - 10 - following_label.get_height() - state_label.get_height()))
         screen.blit(following_label, (10, screen.get_height() - 10 - following_label.get_height()))
+        if object_distance >= 0:
+            screen.blit(angle_label, (screen.get_width() - 10 - angle_label.get_width(), screen.get_height() - 10 - angle_label.get_height() - window_label.get_height() - object_label.get_height()))
+            screen.blit(window_label, (screen.get_width() - 10 - window_label.get_width(), screen.get_height() - 10 - window_label.get_height() - object_label.get_height()))
         screen.blit(object_label, (screen.get_width() - 10 - object_label.get_width(), screen.get_height() - 10 - object_label.get_height()))
+
+        #data = drone.navdata.get(0, dict())
+        #vx, vy, vz = data.get("vx", 0.0), data.get("vy", 0.0), data.get("vz", 0.0)
+        #print "%2.3f %2.3f %2.3f" % (vx, vy, vz)
+
+        if videoout_hud:
+            frame_hud = pygame.surfarray.array3d(screen)
+            frame_hud = frame_hud.swapaxes(0, 1)
+            frame_hud = cv2.cvtColor(frame_hud, cv2.COLOR_BGR2RGB)
+            videoout_hud.write(frame_hud)
 
         pygame.display.flip()
         if FAKE_VIDEO:
-            clock.tick(20)
+            clock.tick(30)
         else:
             clock.tick(0)
         pygame.display.set_caption("FPS: %.2f" % clock.get_fps())
@@ -445,11 +597,25 @@ if __name__ == '__main__':
         video = cv2.VideoCapture(FAKE_VIDEO_PATH)
     print "Done."
 
+    videoout, videoout_hud = None, None
+    if len(sys.argv) > 1 and sys.argv[1] == "--record":
+        now = datetime.datetime.now()
+        filename = now.strftime("video_%Y-%m-%d_%H_%M_%S.mp4")
+        filename_hud = now.strftime("videohud_%Y-%m-%d_%H_%M_%S.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*"XVID")
+        if not FAKE_VIDEO:
+            videoout = cv2.VideoWriter(filename, fourcc, 30, (W, H))
+        #videoout_hud = cv2.VideoWriter(filename_hud, fourcc, 30, (W, H))
+
     try:
-        main(drone, video)
+        main(drone, video, videoout, videoout_hud)
     finally:
         print "Shutting down..."
         drone.land()
         drone.halt()
         print "Ok."
+
+        if videoout:
+            videoout.release()
+            del videoout
 
