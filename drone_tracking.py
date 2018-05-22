@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 
+# constants redundant... hmmm
+W, H = 640, 360
+
 class HumanDetector:
     def __init__(self, every_nth):
         self.every_nth = every_nth
