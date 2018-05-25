@@ -307,7 +307,7 @@ def main(args, drone, video, videoout, videoout_hud):
     screen = pygame.display.set_mode((W, H))
     clock = pygame.time.Clock()
 
-    detector = HumanDetector(9)
+    detector = HumanDetector(6)
     following = False
 
     running = True
