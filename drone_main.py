@@ -212,11 +212,11 @@ def main(args, drone, video, videoout, videoout_hud):
         elif window_distance > DISTANCE_WINDOW:
             window_color = (255, 255, 0)
         window_label = f.render("Window: %0.3f" % window_distance, True, window_color)
-        
+
         object_label = f.render("Height: %0.3f, d: %2.2fm" % (object_height, object_distance), True, (255, 255, 255))
 
         screen.blit(surface, (0, 0))
-        screen.blit(battery_label, (10, 10))
+        #screen.blit(battery_label, (10, 10))
         screen.blit(state_label, (10, screen.get_height() - 10 - following_label.get_height() - state_label.get_height()))
         screen.blit(following_label, (10, screen.get_height() - 10 - following_label.get_height()))
         if object_distance >= 0:
@@ -239,7 +239,7 @@ def main(args, drone, video, videoout, videoout_hud):
             clock.tick(30)
         else:
             clock.tick(0)
-        pygame.display.set_caption("FPS: %.2f" % clock.get_fps())
+        pygame.display.set_caption("FPS: %2.2f BAT: %i%%" % (clock.get_fps(), bat))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="")
