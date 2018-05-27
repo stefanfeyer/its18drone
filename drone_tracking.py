@@ -1,5 +1,6 @@
 import cv2
 import numpy as np
+from imutils.object_detection import non_max_suppression
 
 #TODO (jh): remove before rollout
 import pdb
@@ -16,6 +17,7 @@ class HumanDetector:
         self.hog = cv2.HOGDescriptor()
         self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
 
+        # outputs of people detector
         self.drects = None
         self.dweights = None
 
@@ -30,15 +32,6 @@ class HumanDetector:
         self.tracker = cv2.TrackerKCF_create()
         self.tracker.init(frame, tuple(rect))
         self.tracking = True
-
-# every 3rd frame, update tracker
-# every nth frame, refind person
-# if person found:
-#   update tracker with new person rect
-# elif tracker is still tracking:
-#   keep tracking
-# else:
-#   keep trying to refind person
 
     def index_hist(self, hist):
         hist_indexed = np.zeros((len(hist), 2), np.float32)
@@ -122,7 +115,7 @@ class HumanDetector:
             if self.tracking: # only look in close proximity to currently tracked object
                 print "still tracking!"
                 x,y,w,h = self.trect
-                roi_border = 20
+                roi_border = 100
                 roi = frame[max(y-roi_border,0):min(y+h+roi_border, frame.shape[0]), max(x-roi_border, 0):min(x+w+roi_border, frame.shape[1])]
                 self.drects, self.dweights = self.hog.detectMultiScale(roi, winStride=(8, 8), padding=(8, 8), scale=1.2)
                 print len(self.drects)
@@ -131,6 +124,7 @@ class HumanDetector:
                     rect[1] = rect[1] + max(y-roi_border, 0)
             else:
                 self.drects, self.dweights = self.hog.detectMultiScale(frame, winStride=(8, 8), padding=(8, 8), scale=1.2)
+                self.drects = non_max_suppression(self.drects, probs=None, overlapThresh=0.65)
 
             if len(self.drects) != 0: # persons detected
                 person_found, rect, hist = self.find_right_person(frame)
@@ -168,10 +162,10 @@ class HumanDetector:
         #else:
         #    max_weight_i = np.argmax(self.dweights)
         #    for i, ((x, y, w, h), weight) in enumerate(zip(self.drects, self.dweights)):
-                #x *= 2
-                #y *= 2
-                #w *= 2
-                #h *= 2
+        #    #    x *= 2
+        #    #    y *= 2
+        #    #    w *= 2
+        #    #    h *= 2
 
         #        color = (255, 255, 255) if i != max_weight_i else (255, 0, 0)
         #        frame = cv2.rectangle(frame, (x,y), (x+w, y+h), color)
