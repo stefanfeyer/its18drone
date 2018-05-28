@@ -261,7 +261,7 @@ if __name__ == '__main__':
         video = cv2.VideoCapture(args.fake_video)
     print "Done."
 
-    videoout, videout_hud = None, None
+    videoout, videoout_hud = None, None
     now = datetime.datetime.now()
     filename = now.strftime("video_%Y-%m-%d_%H_%M_%S.mp4")
     filename_hud = now.strftime("videohud_%Y-%m-%d_%H_%M_%S.mp4")
@@ -272,7 +272,7 @@ if __name__ == '__main__':
         videoout_hud = cv2.VideoWriter(filename_hud, fourcc, 30, (W, H))
 
     try:
-        main(args, drone, video, videoout, videout_hud)
+        main(args, drone, video, videoout, videoout_hud)
     finally:
         print "Shutting down..."
         drone.land()
@@ -282,7 +282,7 @@ if __name__ == '__main__':
         if videoout:
             videoout.release()
             del videoout
-        if videout_hud:
-            videout_hud.release()
-            del videout_hud
+        if videoout_hud:
+            videoout_hud.release()
+            del videoout_hud
 
