@@ -99,8 +99,6 @@ class HumanDetector:
         #print max_similarity, closest_rect, (closest_rect is not None)
         return (closest_rect is not None), closest_rect, closest_hist
 
-            
-
     def process(self, frame):
         self.tcounter = (self.tcounter + 1) % (self.every_nth/2)
         self.dcounter = (self.dcounter + 1) % self.every_nth

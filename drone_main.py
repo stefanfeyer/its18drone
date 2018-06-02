@@ -1,33 +1,5 @@
 #!/usr/bin/env python2
 
-# Copyright (c) 2011 Bastian Venthur
-#
-# Permission is hereby granted, free of charge, to any person obtaining a copy
-# of this software and associated documentation files (the "Software"), to deal
-# in the Software without restriction, including without limitation the rights
-# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-# copies of the Software, and to permit persons to whom the Software is
-# furnished to do so, subject to the following conditions:
-#
-# The above copyright notice and this permission notice shall be included in
-# all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-# THE SOFTWARE.
-
-
-"""Demo app for the AR.Drone.
-
-This simple application allows to control the drone and see the drone's video
-stream.
-"""
-
-
 import argparse
 import pygame
 import sys
@@ -56,7 +28,6 @@ def main(args, drone, video, videoout, videoout_hud):
     last_following_state = None
     last_object_heights = []
     last_object_heights_n = 6*3
-    #dat = open("test.dat", "w")
     while running:
         manual_state = get_current_manual_state()
         for event in pygame.event.get():
@@ -141,10 +112,10 @@ def main(args, drone, video, videoout, videoout_hud):
             # -> with some threshold just take rect, to prevent crash of drone
             # later note: psssssh that was just a bug
 
-            object_distance = distance(object_height)
+            object_distance = measure_distance(object_height)
             cx = rect[0] + rect[2] * 0.5
-            object_angle = angle(cx, object_distance)
-            threshold_angle = angle(LEFT_TURN_THRESHOLD, object_distance)
+            object_angle = measure_angle(cx, object_distance)
+            threshold_angle = measure_angle(LEFT_TURN_THRESHOLD, object_distance)
         else:
             last_object_heights = []
 
@@ -153,14 +124,9 @@ def main(args, drone, video, videoout, videoout_hud):
             following_state = get_state_following(last_following_state, rect, object_height, object_distance, (W, H))
             last_following_state = following_state
 
-        # last state + following_state + manual state
         state = join_states(following_state, manual_state)
-        #state = manual_state
         state = join_states(state_hover(), state)
-        #state = join_states(last_state, following_state)
-        #state = join_states(state, manual_state)
         if all(map(lambda x: x == 0, state[1:])):
-            #print "Converting state to hover"
             state = state_hover()
 
         if state != last_state:
@@ -168,17 +134,17 @@ def main(args, drone, video, videoout, videoout_hud):
             apply_state(drone, state)
         last_state = state
 
-        #dat.write(str(object_distance))
-        #dat.write("\n")
-        #dat.flush()
-
         frame = cv2.line(frame, (LEFT_TURN_THRESHOLD, 0), (LEFT_TURN_THRESHOLD, H), (0, 255, 0))
         frame = cv2.line(frame, (RIGHT_TURN_THRESHOLD, 0), (RIGHT_TURN_THRESHOLD, H), (0, 255, 0))
+
+        # debug stuff: plot turn speeds
         #poly = []
         #for x in range(0, W):
         #    speed = turn_speed(x)
         #    poly.append([x, int(0.5 * H - speed / 0.4 * 50)])
         #frame = cv2.polylines(frame, [np.array(poly)], False, (0, 255, 0))
+        
+        # debug stuff: plot angles
         def draw_angle(a, length, color, frame=frame):
             actual_a = abs(a)
             p1 = (W / 2, H)
@@ -194,7 +160,6 @@ def main(args, drone, video, videoout, videoout_hud):
 
         frame = detector.render_rects(frame, object_height)
         surface = pygame.surfarray.make_surface(np.flip(np.rot90(frame), 0))
-        # battery status
         hud_color = (255, 0, 0) if drone.navdata.get('drone_state', dict()).get('emergency_mask', 1) else (10, 10, 255)
         following_color = (0, 255, 0) if following else (255, 0, 0)
         bat = drone.navdata.get(0, dict()).get('battery', 0)
@@ -207,9 +172,9 @@ def main(args, drone, video, videoout, videoout_hud):
 
         window_distance = object_distance - MIN_DISTANCE
         window_color = (0, 255, 0)
-        if window_distance < -DISTANCE_WINDOW:
+        if window_distance < -DISTANCE_WINDOW_RADIUS:
             window_color = (255, 0, 0)
-        elif window_distance > DISTANCE_WINDOW:
+        elif window_distance > DISTANCE_WINDOW_RADIUS:
             window_color = (255, 255, 0)
         window_label = f.render("Window: %0.3f" % window_distance, True, window_color)
 
@@ -223,10 +188,6 @@ def main(args, drone, video, videoout, videoout_hud):
             screen.blit(angle_label, (screen.get_width() - 10 - angle_label.get_width(), screen.get_height() - 10 - angle_label.get_height() - window_label.get_height() - object_label.get_height()))
             screen.blit(window_label, (screen.get_width() - 10 - window_label.get_width(), screen.get_height() - 10 - window_label.get_height() - object_label.get_height()))
         screen.blit(object_label, (screen.get_width() - 10 - object_label.get_width(), screen.get_height() - 10 - object_label.get_height()))
-
-        #data = drone.navdata.get(0, dict())
-        #vx, vy, vz = data.get("vx", 0.0), data.get("vy", 0.0), data.get("vz", 0.0)
-        #print "%2.3f %2.3f %2.3f" % (vx, vy, vz)
 
         if videoout_hud:
             frame_hud = pygame.surfarray.array3d(screen)
