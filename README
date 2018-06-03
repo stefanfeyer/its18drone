@@ -1,0 +1,37 @@
+
+Readme for AR.Drone 2 person following
+======================================
+
+Run the program as follows:
+    ./drone_main.py
+
+Required are:
+    - Python 2
+    - OpenCV
+    - Numpy
+    - Imutils
+    - Pygame
+
+There are some command line parameters for the program:
+    - --fake-video [PATH], use a video file as input instead of drone camera stream
+        (make sure that laptop is not connected to actual drone then)
+    - --record, record drone camera stream to a file
+    - --record-hud, record whole displayed HUD to a file
+
+The following keyboard keys can be used in the program:
+General:
+- ESC: Quit program, disconnect from drone
+- f: Toggle autopilot on/off
+- comma and dot: jump in video (if --fake-video is used)
+
+Manual flying (sent commands always overwrite autopilot):
+- Enter: Takeoff of drone
+- Space: Land the drone
+- Backspace: Emergency landing
+- W and S: Fly forward / backward
+- A and D: Fly left / right
+- Up and down: Fly up / down
+- Left and tirhgt: Turn left / right
+
+In order to follow a person, you have to start the drone first, fly to the
+person manually and then enable following.

@@ -51,27 +51,6 @@ def main(args, drone, video, videoout, videoout_hud):
                 # emergency
                 elif event.key == pygame.K_BACKSPACE:
                     drone.reset()
-                # speed
-                elif event.key == pygame.K_1:
-                    drone.speed = 0.1
-                elif event.key == pygame.K_2:
-                    drone.speed = 0.2
-                elif event.key == pygame.K_3:
-                    drone.speed = 0.3
-                elif event.key == pygame.K_4:
-                    drone.speed = 0.4
-                elif event.key == pygame.K_5:
-                    drone.speed = 0.5
-                elif event.key == pygame.K_6:
-                    drone.speed = 0.6
-                elif event.key == pygame.K_7:
-                    drone.speed = 0.7
-                elif event.key == pygame.K_8:
-                    drone.speed = 0.8
-                elif event.key == pygame.K_9:
-                    drone.speed = 0.9
-                elif event.key == pygame.K_0:
-                    drone.speed = 1.0
                 elif event.key == pygame.K_p:
                     pprint.pprint(drone.navdata.get(0, {}))
                     pprint.pprint(drone.navdata.get("drone_state", {}))
@@ -203,10 +182,10 @@ def main(args, drone, video, videoout, videoout_hud):
         pygame.display.set_caption("FPS: %2.2f BAT: %i%%" % (clock.get_fps(), bat))
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="")
-    parser.add_argument("--fake-video", "-f", default=None, type=str)
-    parser.add_argument("--record", default=False, action="store_true")
-    parser.add_argument("--record-hud", default=False, action="store_true")
+    parser = argparse.ArgumentParser(description="AR.Drone 2 person following")
+    parser.add_argument("--fake-video", "-f", help="Use a video file as input instead of real drone camera livestream", default=None, type=str)
+    parser.add_argument("--record", help="Record drone camera livestream to a video file (filename will be chosen automatically)", default=False, action="store_true")
+    parser.add_argument("--record-hud", help="Record whole HUD stream to a video file (filename will be chosen automatically)", default=False, action="store_true")
 
     args = parser.parse_args()
 
