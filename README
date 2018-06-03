@@ -2,6 +2,8 @@
 Readme for AR.Drone 2 person following
 ======================================
 
+Github repository URL: https://github.com/stefanfeyer/its18drone
+
 Run the program as follows:
     ./drone_main.py
 
